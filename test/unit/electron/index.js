@@ -335,7 +335,6 @@ app.on('ready', () => {
 			additionalArguments: [`--vscode-window-config=vscode:test-vscode-window-config`],
 			nodeIntegration: true,
 			contextIsolation: false,
-			enableWebSQL: false,
 			spellcheck: false
 		}
 	});
