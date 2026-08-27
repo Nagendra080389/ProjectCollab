@@ -4574,6 +4574,32 @@ suite('AgentService (node dispatcher)', () => {
 			assert.deepStrictEqual(registered, new Set([legacy.toString()]));
 		});
 
+		test('waits for initial provider migration before refreshing Automations', async () => {
+			const migrationStarted = new DeferredPromise<void>();
+			const migrationGate = new DeferredPromise<void>();
+			class GatedMigrationAgent extends MockAgent {
+				override async listChatsToMigrate(): Promise<readonly IAgentChatMetadata[]> {
+					await migrationStarted.complete();
+					await migrationGate.p;
+					return [];
+				}
+			}
+			const svc = disposables.add(createTestAgentService(new NullLogService(), fileService, createSessionDataService(), { _serviceBrand: undefined } as IProductService, createNoopGitService()));
+			let automationRefreshes = 0;
+			(svc as unknown as { _automationService: { handleAgentsChanged(): void } })._automationService.handleAgentsChanged = () => automationRefreshes++;
+			const agent = disposables.add(new GatedMigrationAgent('copilot'));
+
+			registerTestAgentProvider(svc, agent);
+			await migrationStarted.p;
+			assert.strictEqual(automationRefreshes, 0);
+
+			await migrationGate.complete();
+			for (let i = 0; i < 20 && automationRefreshes === 0; i++) {
+				await timeout(0);
+			}
+			assert.strictEqual(automationRefreshes, 1);
+		});
+
 		test('a provider whose native catalog gains a chat is discovered on its chat-list-changed signal', async () => {
 			class LateEnumerableAgent extends MockAgent {
 				private readonly _onDidDiscoverChats = new Emitter<readonly IAgentDiscoveredChat[]>();
@@ -7278,10 +7304,12 @@ suite('AgentService (node dispatcher)', () => {
 			class LazyMetadataAgent extends MockAgent {
 				ambientReads = 0;
 				restoreReads = 0;
+				restoreRegistryFallback = false;
 
 				override async getChatMetadata(chat: URI, context: URI | IAgentChatContext, _providerData?: string, options?: IAgentChatMetadataOptions): Promise<IAgentChatMetadata | undefined> {
 					if (options?.activation === 'restore') {
 						this.restoreReads++;
+						this.restoreRegistryFallback = options.registryFallback !== undefined;
 					} else {
 						this.ambientReads++;
 					}
@@ -7305,9 +7333,11 @@ suite('AgentService (node dispatcher)', () => {
 			assert.deepStrictEqual({
 				readsAfterAmbientListing,
 				readsAfterRestore: { ambient: agent.ambientReads, restore: agent.restoreReads },
+				restoreRegistryFallback: agent.restoreRegistryFallback,
 			}, {
 				readsAfterAmbientListing: { ambient: 1, restore: 0 },
 				readsAfterRestore: { ambient: 1, restore: 1 },
+				restoreRegistryFallback: true,
 			});
 		});
 
@@ -11113,6 +11143,53 @@ suite('AgentService (node dispatcher)', () => {
 			assert.ok(!registered.includes(AgentSession.uri('copilot', 'restored-peer-backing-sdk-id').toString()), 'the backing session must not leak into the registered session list');
 		});
 
+		test('persists a replacement backing reported after peer chat materialization', async () => {
+			class RematerializingPeerAgent extends MockAgent {
+				private readonly _materialized = new Emitter<IAgentMaterializeChatEvent>();
+				override readonly onDidMaterializeChat = this._materialized.event;
+
+				override async createChat(): Promise<IAgentCreateChatResult> {
+					return { providerData: 'initial-backing' };
+				}
+
+				fireRematerialized(chat: URI, result: IAgentCreateChatResult): void {
+					this._materialized.fire({ chat, result, workingDirectories: undefined, project: undefined });
+				}
+
+				override dispose(): void {
+					this._materialized.dispose();
+					super.dispose();
+				}
+			}
+
+			const perSession = createPerSessionDataService();
+			const localService = disposables.add(createTestAgentService(new NullLogService(), fileService, perSession.service, { _serviceBrand: undefined } as IProductService, createNoopGitService()));
+			const agent = disposables.add(new RematerializingPeerAgent('copilot'));
+			registerTestAgentProvider(localService, agent);
+			const session = await localService.createSession({ provider: agent.id });
+			const peerUri = URI.parse(buildChatUri(session, 'peer-1'));
+			await localService.createChat(session, peerUri);
+			const replacement = AgentSession.uri(agent.id, 'replacement-backing');
+
+			agent.fireRematerialized(peerUri, { providerData: 'replacement-data', backingSession: replacement });
+			const sessionDb = perSession.database(session);
+			const backingDb = perSession.database(replacement);
+			await waitForMetadata(backingDb, 'peerChatBacking', peerUri.toString());
+			let catalog = await readCatalog(sessionDb);
+			for (let i = 0; i < 50 && catalog.find(entry => entry.uri === peerUri.toString())?.providerData !== 'replacement-data'; i++) {
+				await timeout(0);
+				catalog = await readCatalog(sessionDb);
+			}
+
+			assert.deepStrictEqual({
+				providerData: catalog.find(entry => entry.uri === peerUri.toString())?.providerData,
+				backingMarker: await backingDb.getMetadata('peerChatBacking'),
+			}, {
+				providerData: 'replacement-data',
+				backingMarker: peerUri.toString(),
+			});
+		});
+
 		test('restores the snapshotted default chat title after the session is renamed', async () => {
 			class MultiChatAgent extends MockAgent {
 				override async createChat(): Promise<void> { }
@@ -11339,7 +11416,7 @@ suite('AgentService (node dispatcher)', () => {
 			});
 		});
 
-		test('session creation tools inherit the calling chat model and session permissions', async () => {
+		test('session creation tools inherit the calling chat model, session permissions, and host isolation', async () => {
 			class ServerToolAgent extends MockAgent {
 				readonly createSessionConfigs: (IAgentCreateSessionConfig | undefined)[] = [];
 				readonly createChatOptions: (IAgentCreateChatOptions | undefined)[] = [];
@@ -11384,7 +11461,21 @@ suite('AgentService (node dispatcher)', () => {
 				}
 			}
 
-			const localService = disposables.add(createTestAgentService(new NullLogService(), fileService, createSessionDataService(new TestSessionDatabase()), { _serviceBrand: undefined } as IProductService, createNoopGitService()));
+			const workingDirectory = URI.file('/workspace');
+			const nonGitWorkingDirectory = URI.file('/workspace/non-git');
+			const gitService = createNoopGitService();
+			gitService.getRepositoryRoot = async candidate => candidate.toString() === workingDirectory.toString() ? workingDirectory : undefined;
+			gitService.revParse = async () => 'head';
+			gitService.getCurrentBranch = async () => 'feature';
+			gitService.getDefaultBranch = async () => ({ name: 'main', startPoint: 'main' });
+			const sessionDataService = createSessionDataService(new TestSessionDatabase());
+			const localService = disposables.add(createTestAgentService(new NullLogService(), fileService, sessionDataService, { _serviceBrand: undefined } as IProductService, gitService));
+			setTestAgentHostWorktreeIsolation(localService, disposables.add(new WorktreeIsolation(
+				{ generateBranchName: async () => 'agents/test' },
+				gitService,
+				sessionDataService,
+				new NullLogService(),
+			)));
 			const agent = disposables.add(new ServerToolAgent('copilot'));
 			registerTestAgentProvider(localService, agent);
 			const sourceSession = await localService.createSession({ provider: 'copilot' });
@@ -11398,6 +11489,7 @@ suite('AgentService (node dispatcher)', () => {
 					[ClaudeSessionConfigKey.PermissionMode]: 'bypassPermissions',
 					[CodexSessionConfigKey.PermissionsPreset]: 'full-access',
 					[SessionConfigKey.Mode]: 'plan',
+					[SessionConfigKey.Isolation]: 'folder',
 				},
 			});
 			localService.dispatchAction(sourceChat.toString(), {
@@ -11411,7 +11503,7 @@ suite('AgentService (node dispatcher)', () => {
 
 			await agent.serverToolHost!.executeTool(sourceChat.toString(), SessionServerToolName.CreateSession, {
 				relationship: 'independent',
-				workspace: URI.file('/workspace').toString(),
+				workspace: workingDirectory.toString(),
 				prompt: 'new session',
 				title: 'New Session',
 			});
@@ -11419,23 +11511,50 @@ suite('AgentService (node dispatcher)', () => {
 			const delegatedMessage = createdSessionUri
 				? getStateManager(localService).getChatState(buildDefaultChatUri(createdSessionUri))?.activeTurn?.message
 				: undefined;
+			const createdIsolation = createdSessionUri
+				? getStateManager(localService).getSessionState(createdSessionUri)?.config?.values[SessionConfigKey.Isolation]
+				: undefined;
+			const inheritedSessionConfig = agent.createSessionConfigs.at(-1);
 			await agent.serverToolHost!.executeTool(sourceChat.toString(), SessionServerToolName.CreateSession, {
 				relationship: 'currentSession',
 				prompt: 'new chat',
 				title: 'New Chat',
 			});
+			getStateManager(localService).setSessionConfig(sourceSession.toString(), {
+				schema: { type: 'object', properties: {} },
+				values: {
+					[SessionConfigKey.AutoApprove]: 'autoApprove',
+					[SessionConfigKey.Permissions]: { allow: ['shell'], deny: ['write'] },
+					[SessionConfigKey.Isolation]: 'worktree',
+				},
+			});
+			const sessionsBeforeDowngrade = new Set(getStateManager(localService).getSessionUris());
+			await agent.serverToolHost!.executeTool(sourceChat.toString(), SessionServerToolName.CreateSession, {
+				relationship: 'independent',
+				workspace: nonGitWorkingDirectory.toString(),
+				prompt: 'new non-git session',
+				title: 'Non-Git Session',
+			});
+			const downgradedSessionUri = getStateManager(localService).getSessionUris().find(uri => !sessionsBeforeDowngrade.has(uri));
+			const downgradedIsolation = downgradedSessionUri
+				? getStateManager(localService).getSessionState(downgradedSessionUri)?.config?.values[SessionConfigKey.Isolation]
+				: undefined;
 
 			assert.deepStrictEqual({
 				sourceModelBeforeCreation,
+				createdIsolation,
+				downgradedIsolation,
 				delegation: delegatedMessage && readAgentMessageDelegationMeta(delegatedMessage),
 				sessionConfig: {
-					...agent.createSessionConfigs.at(-1),
-					session: agent.createSessionConfigs.at(-1)?.session?.scheme,
-					workingDirectories: agent.createSessionConfigs.at(-1)?.workingDirectories?.map(uri => uri.toString()),
+					...inheritedSessionConfig,
+					session: inheritedSessionConfig?.session?.scheme,
+					workingDirectories: inheritedSessionConfig?.workingDirectories?.map(uri => uri.toString()),
 				},
 				chatOptions: agent.createChatOptions.at(-1),
 			}, {
 				sourceModelBeforeCreation: { id: 'source-model' },
+				createdIsolation: 'folder',
+				downgradedIsolation: 'folder',
 				delegation: {
 					sourceSession: sourceSession.toString(),
 					sourceChat: sourceChat.toString(),
@@ -13966,7 +14085,7 @@ suite('AgentService (node dispatcher)', () => {
 			assert.strictEqual(state?.workingDirectories?.[0], worktreeDir.toString());
 		});
 
-		test('pending worktree session probes the source repository but defers branch changes until materialization', async () => {
+		test('pending worktree session shows source uncommitted changes but defers branch changes until materialization', async () => {
 			class ProvisionalWorktreeAgent extends MockAgent {
 				private readonly _onDidMaterializeChat = new Emitter<IAgentMaterializeChatEvent>();
 				override readonly onDidMaterializeChat = this._onDidMaterializeChat.event;
@@ -14000,11 +14119,12 @@ suite('AgentService (node dispatcher)', () => {
 			gitService.getBranches = async () => [{ ref: 'refs/heads/main', name: 'main', kind: GitRefType.Head }];
 			gitService.getSessionGitState = async (resource, baseBranch) => {
 				gitStateCalls.push({ resource: resource.toString(), baseBranch });
-				return { branchName: 'feature', baseBranchName: 'main' };
+				return { branchName: 'feature', baseBranchName: 'main', uncommittedChanges: 1 };
 			};
 			gitService.computeSessionFileDiffs = async resource => {
 				diffCalls.push(resource.toString());
-				return [];
+				const file = URI.joinPath(resource, 'dirty.ts').toString();
+				return [{ after: { uri: file, content: { uri: file } }, diff: { added: 1, removed: 0 } }];
 			};
 
 			const localService = disposables.add(createTestAgentService(new NullLogService(), fileService, nullSessionDataService, { _serviceBrand: undefined } as IProductService, gitService));
@@ -14029,18 +14149,33 @@ suite('AgentService (node dispatcher)', () => {
 				},
 			});
 			const branchChangeset = buildBranchChangesetUri(session.toString());
+			const uncommittedChangeset = buildUncommittedChangesetUri(session.toString());
 			localService.addSubscriber(URI.parse(branchChangeset), 'client-1');
-			await timeout(0);
+			localService.addSubscriber(URI.parse(uncommittedChangeset), 'client-1');
+			for (let i = 0; i < 100; i++) {
+				const uncommittedState = getStateManager(localService).getChangesetState(uncommittedChangeset);
+				if (uncommittedState?.status === ChangesetStatus.Ready
+					&& uncommittedState.operations?.some(operation => operation.id === 'commit')
+					&& uncommittedState.operations.some(operation => operation.id === 'discard-changes')) {
+					break;
+				}
+				await timeout(2);
+			}
 
+			const sourceFile = URI.joinPath(sourceDir, 'dirty.ts').toString();
+			const uncommittedStateBeforeMaterialization = getStateManager(localService).getChangesetState(uncommittedChangeset);
 			const beforeMaterialization = {
 				workingDirectory: getStateManager(localService).getSessionState(session.toString())?.workingDirectories?.[0],
 				gitStateCalls: [...gitStateCalls],
-				diffCalls: [...diffCalls],
+				diffCalls: [...new Set(diffCalls)],
+				uncommittedFiles: uncommittedStateBeforeMaterialization?.files.map(file => file.id),
+				uncommittedOperations: uncommittedStateBeforeMaterialization?.operations?.map(operation => operation.id).sort(),
 			};
 
 			isolation.clearPending(AgentSession.id(session));
 			agent.materialize(session, worktreeDir);
-			for (let i = 0; i < 20 && diffCalls.length === 0; i++) {
+			const worktreeFile = URI.joinPath(worktreeDir, 'dirty.ts').toString();
+			for (let i = 0; i < 20 && !getStateManager(localService).getChangesetState(uncommittedChangeset)?.files.some(file => file.id === worktreeFile); i++) {
 				await timeout(0);
 			}
 
@@ -14049,19 +14184,24 @@ suite('AgentService (node dispatcher)', () => {
 				afterMaterialization: {
 					workingDirectory: getStateManager(localService).getSessionState(session.toString())?.workingDirectories?.[0],
 					diffCalls: [...new Set(diffCalls)],
+					uncommittedFiles: getStateManager(localService).getChangesetState(uncommittedChangeset)?.files.map(file => file.id),
 				},
 			}, {
 				beforeMaterialization: {
 					workingDirectory: sourceDir.toString(),
 					gitStateCalls: [{ resource: sourceDir.toString(), baseBranch: undefined }],
-					diffCalls: [],
+					diffCalls: [sourceDir.toString()],
+					uncommittedFiles: [sourceFile],
+					uncommittedOperations: ['commit', 'discard-changes'],
 				},
 				afterMaterialization: {
 					workingDirectory: worktreeDir.toString(),
-					diffCalls: [worktreeDir.toString()],
+					diffCalls: [sourceDir.toString(), worktreeDir.toString()],
+					uncommittedFiles: [worktreeFile],
 				},
 			});
 			localService.unsubscribe(URI.parse(branchChangeset), 'client-1');
+			localService.unsubscribe(URI.parse(uncommittedChangeset), 'client-1');
 		});
 
 		test('_resolveWorkingDirectoryBeforeSend returns the full set (index 0 + tail), or undefined when unset', async () => {

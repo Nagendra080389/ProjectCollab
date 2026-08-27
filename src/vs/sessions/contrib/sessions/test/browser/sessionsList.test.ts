@@ -26,6 +26,7 @@ import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IAutomationRun } from '../../../../../workbench/contrib/chat/common/automations/automation.js';
 import { IAutomationService } from '../../../../../workbench/contrib/chat/common/automations/automationService.js';
+import { IPreferencesService, IOpenSettingsOptions } from '../../../../../workbench/services/preferences/common/preferences.js';
 import { getSessionChatDragData, isSessionChatDrag, SessionsDataTransfers } from '../../../../browser/dnd.js';
 import { IsPhoneLayoutContext } from '../../../../common/contextkeys.js';
 import { ICustomViewService } from '../../../../services/customView/browser/customViewService.js';
@@ -47,6 +48,7 @@ function createSession(id: string, opts: {
 	isArchived?: boolean;
 	isRead?: boolean;
 	isAutomation?: boolean;
+	isExternal?: boolean;
 	resource?: URI;
 }): ISession {
 	const createdAt = opts.createdAt ?? new Date();
@@ -68,6 +70,7 @@ function createSession(id: string, opts: {
 		} : undefined),
 		isQuickChat: observableValue(`isQuickChat-${id}`, opts.workspaceLabel === undefined),
 		isAutomation: observableValue(`isAutomation-${id}`, opts.isAutomation === true),
+		isExternal: observableValue(`isExternal-${id}`, opts.isExternal === true),
 		title: observableValue(`title-${id}`, id),
 		updatedAt: observableValue(`updatedAt-${id}`, updatedAt),
 		status: observableValue(`status-${id}`, SessionStatus.Completed),
@@ -552,6 +555,7 @@ suite('Sessions - SessionsList', () => {
 			},
 			new class extends mock<IOpenerService>() { },
 			new class extends mock<ILabelService>() { },
+			new class extends mock<IPreferencesService>() { },
 			{
 				title: 'Creator session',
 				onOpen,
@@ -561,6 +565,36 @@ suite('Sessions - SessionsList', () => {
 		assert.deepStrictEqual(hover.createdBy, {
 			title: 'Creator session',
 			onOpen,
+		});
+	});
+
+	test('external session hover leads to the setting that governs external sessions', () => {
+		const queries: (string | undefined)[] = [];
+		const hoverFor = (isExternal: boolean) => getSessionSummaryHoverData(
+			createSession(isExternal ? 'External' : 'Local', { workspaceLabel: 'Workspace', isExternal }),
+			new class extends mock<ISessionsProvidersService>() {
+				override getProvider() { return undefined; }
+			},
+			new class extends mock<IOpenerService>() { },
+			new class extends mock<ILabelService>() { },
+			new class extends mock<IPreferencesService>() {
+				override async openSettings(options?: IOpenSettingsOptions): Promise<undefined> {
+					queries.push(options?.query);
+					return undefined;
+				}
+			},
+		);
+		const externalHover = hoverFor(true);
+		externalHover.externalSession?.onOpen();
+
+		assert.deepStrictEqual({
+			external: !!externalHover.externalSession,
+			local: !!hoverFor(false).externalSession,
+			queries,
+		}, {
+			external: true,
+			local: false,
+			queries: ['@id:chat.agentSessions.showExternal'],
 		});
 	});
 
@@ -617,6 +651,7 @@ suite('Sessions - SessionsList', () => {
 			new class extends mock<ILabelService>() {
 				override getUriLabel(resource: URI): string { return resource.path; }
 			},
+			new class extends mock<IPreferencesService>() { },
 		);
 		hover.pullRequests?.forEach(pullRequest => pullRequest.onOpen?.());
 
@@ -875,11 +910,11 @@ suite('Sessions - SessionsList', () => {
 				date: rowSnapshot(dateRows).map(row => ({ title: row.title, badge: row.badge, ariaLabel: row.ariaLabel })),
 			}, {
 				workspace: [
-					{ title: 'Grouped', badge: 'vscode', ariaLabel: 'Grouped, updated now, in vscode' },
-					{ title: 'Ordinary', badge: undefined, ariaLabel: 'Ordinary, updated now' },
+					{ title: 'Grouped', badge: 'vscode', ariaLabel: 'Grouped, updated now, State: Completed, in vscode' },
+					{ title: 'Ordinary', badge: undefined, ariaLabel: 'Ordinary, updated now, State: Completed' },
 				],
 				date: [
-					{ title: 'Ordinary', badge: 'monaco', ariaLabel: 'Ordinary, updated now, in monaco' },
+					{ title: 'Ordinary', badge: 'monaco', ariaLabel: 'Ordinary, updated now, State: Completed, in monaco' },
 				],
 			});
 		});
@@ -1019,6 +1054,142 @@ suite('Sessions - SessionsList', () => {
 				])
 			), {
 				'Active chat': { hasProgress: true, hasDot: false, hasDiscussion: false, ariaLabel: 'Active chat, chat, updated now, State: In Progress' },
+			});
+		});
+
+		test('needs-input chat row gets the same accent-pulse feedback class as a needs-input session row', () => {
+			const main = createChat('Main chat');
+			const waiting = createChat('Waiting chat', ChatOriginKind.User, ChatInteractivity.Full, SessionStatus.NeedsInput);
+			const base = createTestSession('Session').session;
+			const session: ISession = {
+				...base,
+				chats: constObservable([main, waiting]),
+				mainChat: constObservable(main),
+				capabilities: constObservable({ supportsMultipleChats: true }),
+			};
+
+			const container = renderSessionChats(session);
+
+			const waitingRow = [...container.querySelectorAll<HTMLElement>('.session-chat-item')]
+				.find(element => element.textContent?.includes('Waiting chat'));
+			assert.ok(waitingRow);
+
+			assert.strictEqual(waitingRow.classList.contains('needs-input'), true);
+		});
+
+		function sessionRowSnapshot(container: HTMLElement) {
+			const row = container.querySelector<HTMLElement>('.session-item');
+			assert.ok(row);
+			return {
+				inProgress: row.classList.contains('in-progress'),
+				needsInput: row.classList.contains('needs-input'),
+				ariaLabel: row.closest('.monaco-list-row')?.getAttribute('aria-label') ?? null,
+			};
+		}
+
+		test('parent session row reflects the main chat status, not a non-main chat NeedsInput that drives the aggregate session status', () => {
+			const main = createChat('Main chat', undefined, ChatInteractivity.Full, SessionStatus.Completed);
+			const peer = createChat('Peer chat', ChatOriginKind.User, ChatInteractivity.Full, SessionStatus.NeedsInput);
+			const base = createTestSession('Session').session;
+			const session: ISession = {
+				...base,
+				status: constObservable(SessionStatus.NeedsInput),
+				chats: constObservable([main, peer]),
+				mainChat: constObservable(main),
+				capabilities: constObservable({ supportsMultipleChats: true }),
+			};
+
+			const container = renderSessionChats(session);
+
+			const peerRow = [...container.querySelectorAll<HTMLElement>('.session-chat-item')]
+				.find(element => element.textContent?.includes('Peer chat'));
+			assert.ok(peerRow);
+
+			assert.deepStrictEqual({
+				session: sessionRowSnapshot(container),
+				peerChatNeedsInput: peerRow.closest('.monaco-list-row')?.getAttribute('aria-label'),
+				aggregateStatus: session.status.get(),
+			}, {
+				session: { inProgress: false, needsInput: false, ariaLabel: 'Session, updated now, State: Completed, in Workspace' },
+				peerChatNeedsInput: 'Peer chat, chat, updated now, State: Input Needed',
+				aggregateStatus: SessionStatus.NeedsInput,
+			});
+		});
+
+		test('parent session row still shows NeedsInput when the main chat itself needs input', () => {
+			const main = createChat('Main chat', undefined, ChatInteractivity.Full, SessionStatus.NeedsInput);
+			const peer = createChat('Peer chat', ChatOriginKind.User, ChatInteractivity.Full, SessionStatus.Completed);
+			const base = createTestSession('Session').session;
+			const session: ISession = {
+				...base,
+				status: constObservable(SessionStatus.NeedsInput),
+				chats: constObservable([main, peer]),
+				mainChat: constObservable(main),
+				capabilities: constObservable({ supportsMultipleChats: true }),
+			};
+
+			const container = renderSessionChats(session);
+
+			assert.deepStrictEqual(sessionRowSnapshot(container), {
+				inProgress: false,
+				needsInput: true,
+				ariaLabel: 'Session, updated now, State: Input Needed',
+			});
+		});
+
+		test('parent session row updates reactively when the main chat status changes independently of a non-main chat', () => {
+			const mainStatus = observableValue('main-status', SessionStatus.Completed);
+			const main = upcastPartial<IChat>({
+				resource: URI.parse('test-chat://Main-chat'),
+				title: constObservable('Main chat'),
+				updatedAt: constObservable(new Date()),
+				status: mainStatus,
+				interactivity: constObservable(ChatInteractivity.Full),
+			});
+			const peer = createChat('Peer chat', ChatOriginKind.User, ChatInteractivity.Full, SessionStatus.NeedsInput);
+			const aggregateStatus = observableValue('aggregate-status', SessionStatus.NeedsInput);
+			const base = createTestSession('Session').session;
+			const session: ISession = {
+				...base,
+				status: aggregateStatus,
+				chats: constObservable([main, peer]),
+				mainChat: constObservable(main),
+				capabilities: constObservable({ supportsMultipleChats: true }),
+			};
+
+			const container = renderSessionChats(session);
+			const before = sessionRowSnapshot(container);
+
+			mainStatus.set(SessionStatus.NeedsInput, undefined);
+
+			assert.deepStrictEqual({ before, after: sessionRowSnapshot(container) }, {
+				before: { inProgress: false, needsInput: false, ariaLabel: 'Session, updated now, State: Completed, in Workspace' },
+				after: { inProgress: false, needsInput: true, ariaLabel: 'Session, updated now, State: Input Needed' },
+			});
+		});
+
+		test('failed non-main chat shows an error icon on its own row', () => {
+			const main = createChat('Main chat', undefined, ChatInteractivity.Full, SessionStatus.Completed);
+			const peer = createChat('Failed chat', ChatOriginKind.User, ChatInteractivity.Full, SessionStatus.Error);
+			const base = createTestSession('Session').session;
+			const session: ISession = {
+				...base,
+				chats: constObservable([main, peer]),
+				mainChat: constObservable(main),
+				capabilities: constObservable({ supportsMultipleChats: true }),
+			};
+
+			const container = renderSessionChats(session);
+			const peerRow = [...container.querySelectorAll<HTMLElement>('.session-chat-item')]
+				.find(element => element.textContent?.includes('Failed chat'));
+			assert.ok(peerRow);
+
+			assert.deepStrictEqual({
+				errorIcon: !!peerRow.querySelector('.codicon-error'),
+				ariaLabel: peerRow.closest('.monaco-list-row')?.getAttribute('aria-label'),
+			}, {
+				errorIcon: true,
+				ariaLabel: 'Failed chat, chat, updated now, State: Failed',
 			});
 		});
 
