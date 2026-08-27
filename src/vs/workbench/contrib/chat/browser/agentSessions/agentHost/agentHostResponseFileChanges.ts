@@ -12,7 +12,7 @@ import { URI } from '../../../../../../base/common/uri.js';
 import { IAgentConnection } from '../../../../../../platform/agentHost/common/agentService.js';
 import { buildTurnChangesetUri, ChangesetKind } from '../../../../../../platform/agentHost/common/changesetUri.js';
 import { normalizeFileEdit } from '../../../../../../platform/agentHost/common/fileEditDiff.js';
-import { toAgentHostUri } from '../../../../../../platform/agentHost/common/agentHostUri.js';
+import { toAgentHostContentUri, toAgentHostUri } from '../../../../../../platform/agentHost/common/agentHostUri.js';
 import {
 	buildDefaultChatUri,
 	ChangesetStatus,
@@ -71,10 +71,10 @@ export function agentHostChangesetFileToEntryDiff(file: ChangesetFile, connectio
 
 	const modifiedURI = toAgentHostUri(normalized.resource, connectionAuthority);
 	const originalURI = normalized.beforeContentUri
-		? toAgentHostUri(normalized.beforeContentUri, connectionAuthority)
+		? toAgentHostContentUri(normalized.beforeContentUri, connectionAuthority)
 		: modifiedURI;
 	const modifiedSnapshotURI = normalized.afterContentUri
-		? toAgentHostUri(normalized.afterContentUri, connectionAuthority)
+		? toAgentHostContentUri(normalized.afterContentUri, connectionAuthority)
 		: undefined;
 
 	return {
@@ -327,9 +327,9 @@ export class AgentHostResponseFileChangesProvider extends Disposable implements 
 		const modifiedURI = toAgentHostUri(afterUri, this._connectionAuthority);
 		const originalURI = normalized.kind === FileEditKind.Create || !normalized.beforeContentUri
 			? modifiedURI
-			: toAgentHostUri(normalized.beforeContentUri, this._connectionAuthority);
+			: toAgentHostContentUri(normalized.beforeContentUri, this._connectionAuthority);
 		const modifiedSnapshotURI = normalized.afterContentUri
-			? toAgentHostUri(normalized.afterContentUri, this._connectionAuthority)
+			? toAgentHostContentUri(normalized.afterContentUri, this._connectionAuthority)
 			: undefined;
 
 		return {
