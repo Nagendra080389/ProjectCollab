@@ -15,6 +15,18 @@ export enum CustomizationMigrationType {
 	PromptFiles = 'promptFiles',
 }
 
+export enum CustomizationMigrationSeverity {
+	Informational = 'informational',
+	Warning = 'warning',
+}
+
+export enum CustomizationMigrationTrigger {
+	EditorNewChat = 'editorNewChat',
+	AgentsNewSession = 'agentsNewSession',
+	AgentsSessionOpen = 'agentsSessionOpen',
+	AgentsSessionRestore = 'agentsSessionRestore',
+}
+
 export interface MigratableConfiguration {
 	readonly uri: URI;
 	readonly type: PromptsType;
@@ -50,4 +62,5 @@ export interface ICustomizationMigrationService {
 	computeMigration(sessionResource: URI, type: CustomizationMigrationType): Promise<CustomizationMigration>;
 	computeMigrations(sessionResource: URI): Promise<CustomizationMigration[]>;
 	computeMigrationHint(sessionResource: URI): Promise<string | undefined>;
+	reportMigrationTelemetry(trigger: CustomizationMigrationTrigger, migrations: readonly CustomizationMigration[]): void;
 }

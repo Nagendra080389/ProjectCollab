@@ -6,12 +6,29 @@
 import { CancellationToken } from '../../../../../../base/common/cancellation.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { localize } from '../../../../../../nls.js';
+import { ITelemetryService } from '../../../../../../platform/telemetry/common/telemetry.js';
 import { isAgentHostSessionResource } from '../../chatSessionsService.js';
 import { ICustomizationHarnessService, ICustomizationSourceFolder } from '../../customizationHarnessService.js';
 import { getChatSessionType } from '../../model/chatUri.js';
 import { PromptsType } from '../promptTypes.js';
 import { IPromptsService } from './promptsService.js';
-import { CustomizationMigration, CustomizationMigrationType, getCustomizationMigrationTargetType, ICustomizationMigrationService, isPromptFileMigrationCandidate, isUserDataMigrationCandidate, MigratableConfiguration } from './customizationMigrationService.js';
+import { CustomizationMigration, CustomizationMigrationSeverity, CustomizationMigrationTrigger, CustomizationMigrationType, getCustomizationMigrationTargetType, ICustomizationMigrationService, isPromptFileMigrationCandidate, isUserDataMigrationCandidate, MigratableConfiguration } from './customizationMigrationService.js';
+
+type CustomizationMigrationAssessmentEvent = {
+	trigger: CustomizationMigrationTrigger;
+	category: CustomizationMigrationType;
+	severity: CustomizationMigrationSeverity;
+	count: number;
+};
+
+type CustomizationMigrationAssessmentClassification = {
+	trigger: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'The chat surface that triggered the customization migration assessment.' };
+	category: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'The category of customization migration finding.' };
+	severity: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'The impact severity of the customization migration finding.' };
+	count: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; isMeasurement: true; comment: 'The number of customizations in the finding.' };
+	owner: 'digitarald';
+	comment: 'Tracks aggregate customization migration findings without collecting customization names, paths, or content.';
+};
 
 export class CustomizationMigrationService implements ICustomizationMigrationService {
 	declare readonly _serviceBrand: undefined;
@@ -19,6 +36,7 @@ export class CustomizationMigrationService implements ICustomizationMigrationSer
 	constructor(
 		@IPromptsService private readonly promptsService: IPromptsService,
 		@ICustomizationHarnessService private readonly customizationHarnessService: ICustomizationHarnessService,
+		@ITelemetryService private readonly telemetryService: ITelemetryService,
 	) { }
 
 	async computeMigration(sessionResource: URI, type: CustomizationMigrationType): Promise<CustomizationMigration> {
@@ -83,5 +101,18 @@ export class CustomizationMigrationService implements ICustomizationMigrationSer
 		return fileCount === 1
 			? localize('customizationMigrationHintSingle', "Found 1 customization file that is present but not used by {0} and could be migrated.", harness.label)
 			: localize('customizationMigrationHintMultiple', "Found {0} customization files that are present but not used by {1} and could be migrated.", fileCount, harness.label);
+	}
+
+	reportMigrationTelemetry(trigger: CustomizationMigrationTrigger, migrations: readonly CustomizationMigration[]): void {
+		for (const migration of migrations) {
+			if (migration.files.length > 0) {
+				this.telemetryService.publicLog2<CustomizationMigrationAssessmentEvent, CustomizationMigrationAssessmentClassification>('chat.customizationMigrationAssessment', {
+					trigger,
+					category: migration.type,
+					severity: CustomizationMigrationSeverity.Warning,
+					count: migration.files.length,
+				});
+			}
+		}
 	}
 }

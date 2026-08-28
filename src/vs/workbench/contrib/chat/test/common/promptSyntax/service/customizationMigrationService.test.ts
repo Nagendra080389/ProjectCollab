@@ -9,9 +9,11 @@ import { Event } from '../../../../../../../base/common/event.js';
 import { URI } from '../../../../../../../base/common/uri.js';
 import { mock } from '../../../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../../base/test/common/utils.js';
+import { NullTelemetryServiceShape } from '../../../../../../../platform/telemetry/common/telemetryUtils.js';
 import { ICustomizationHarnessService, IHarnessDescriptor } from '../../../../common/customizationHarnessService.js';
 import { SessionType } from '../../../../common/chatSessionsService.js';
 import { PromptFileSource, PromptsType } from '../../../../common/promptSyntax/promptTypes.js';
+import { CustomizationMigrationTrigger } from '../../../../common/promptSyntax/service/customizationMigrationService.js';
 import { CustomizationMigrationService } from '../../../../common/promptSyntax/service/customizationMigrationServiceImpl.js';
 import { IPromptPath, PromptsStorage } from '../../../../common/promptSyntax/service/promptsService.js';
 import { MockPromptsService } from './mockPromptsService.js';
@@ -69,6 +71,21 @@ class TestCustomizationHarnessService extends mock<ICustomizationHarnessService>
 	}
 }
 
+interface ITelemetryEvent {
+	readonly eventName: string;
+	readonly data: unknown;
+}
+
+class TestTelemetryService extends NullTelemetryServiceShape {
+	readonly events: ITelemetryEvent[] = [];
+
+	override publicLog2(eventName?: string, data?: unknown): void {
+		if (eventName) {
+			this.events.push({ eventName, data });
+		}
+	}
+}
+
 suite('CustomizationMigrationService', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
@@ -82,7 +99,8 @@ suite('CustomizationMigrationService', () => {
 			{ uri: URI.file('/workspace/.github/skills/deploy/SKILL.md'), storage: PromptsStorage.local, type: PromptsType.skill, source: PromptFileSource.GitHubWorkspace },
 		]));
 		const harnessService = new TestCustomizationHarnessService();
-		const service = new CustomizationMigrationService(promptsService, harnessService);
+		const telemetryService = new TestTelemetryService();
+		const service = new CustomizationMigrationService(promptsService, harnessService, telemetryService);
 		const agentHostSessionResource = URI.from({ scheme: SessionType.AgentHostCopilot, path: '/session' });
 		const localSessionResource = URI.from({ scheme: SessionType.Local, path: '/session' });
 
@@ -90,6 +108,8 @@ suite('CustomizationMigrationService', () => {
 		const localMigrations = await service.computeMigrations(localSessionResource);
 		const hint = await service.computeMigrationHint(agentHostSessionResource);
 		const localHint = await service.computeMigrationHint(localSessionResource);
+		const telemetryBeforeReport = [...telemetryService.events];
+		service.reportMigrationTelemetry(CustomizationMigrationTrigger.EditorNewChat, migrations);
 
 		assert.deepStrictEqual({
 			migrations: migrations.map(migration => ({
@@ -102,6 +122,8 @@ suite('CustomizationMigrationService', () => {
 			localHint,
 			requestedTypes: promptsService.requestedTypes,
 			requestedSourceFolderTypes: harnessService.requestedSourceFolderTypes.toSorted(),
+			telemetryBeforeReport,
+			telemetry: telemetryService.events,
 		}, {
 			migrations: [
 				{
@@ -139,6 +161,17 @@ suite('CustomizationMigrationService', () => {
 				PromptsType.agent, PromptsType.agent, PromptsType.instructions,
 				PromptsType.instructions, PromptsType.skill, PromptsType.skill,
 			],
+			telemetryBeforeReport: [],
+			telemetry: [
+				{
+					eventName: 'chat.customizationMigrationAssessment',
+					data: { trigger: 'editorNewChat', category: 'userData', severity: 'warning', count: 1 },
+				},
+				{
+					eventName: 'chat.customizationMigrationAssessment',
+					data: { trigger: 'editorNewChat', category: 'promptFiles', severity: 'warning', count: 2 },
+				},
+			],
 		});
 	});
 
@@ -147,7 +180,7 @@ suite('CustomizationMigrationService', () => {
 			{ uri: URI.file('/workspace/.github/prompts/review.prompt.md'), storage: PromptsStorage.local, type: PromptsType.prompt, source: PromptFileSource.GitHubWorkspace },
 		]));
 		const harnessService = new TestCustomizationHarnessService(SessionType.AgentHostClaude, 'Claude');
-		const service = new CustomizationMigrationService(promptsService, harnessService);
+		const service = new CustomizationMigrationService(promptsService, harnessService, new TestTelemetryService());
 
 		const hint = await service.computeMigrationHint(URI.from({ scheme: SessionType.AgentHostClaude, path: '/session' }));
 
