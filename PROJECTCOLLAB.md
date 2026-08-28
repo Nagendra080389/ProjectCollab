@@ -20,6 +20,7 @@ Use the Node.js version in `.nvmrc` (currently Node 24). From the repository
 root:
 
 ```bash
+export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
 npm install
 npm run watch
 ```
