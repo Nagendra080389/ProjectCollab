@@ -301,7 +301,7 @@ export class ChatView extends AbstractChatView {
 		this._banners.setActive(this._isActive);
 
 		// Floating status pills above the input.
-		this._chatPills = this._register(instantiationService.createInstance(SessionChatInputToolbar));
+		this._chatPills = this._register(instantiationService.createInstance(SessionChatInputToolbar, false));
 		this._register(this._widget.inputPart.registerChatPetHorizontalPlatformProvider({
 			onDidChange: this._chatPills.onDidChangeChatPetPlatform,
 			getElements: () => this._chatPills.getChatPetPlatformElements(),
