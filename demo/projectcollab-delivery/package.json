@@ -1,0 +1,12 @@
+{
+  "name": "projectcollab-live-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "build": "node scripts/delivery-stage.mjs build",
+    "test": "node --test test/delivery.test.mjs",
+    "release": "node scripts/delivery-stage.mjs release"
+  }
+}

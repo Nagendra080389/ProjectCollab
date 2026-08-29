@@ -22,7 +22,7 @@ export function stageLabel(stageId: DeliveryStageId): string {
 	}
 }
 
-function stageDescription(stageId: DeliveryStageId): string {
+export function stageDescription(stageId: DeliveryStageId): string {
 	switch (stageId) {
 		case 'discover': return vscode.l10n.t('Clarify the problem, users, constraints, and success measures.');
 		case 'plan': return vscode.l10n.t('Define scope, milestones, risks, ownership, and acceptance criteria.');

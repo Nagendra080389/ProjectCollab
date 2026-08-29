@@ -43,8 +43,10 @@ npm run gulp vscode-darwin-arm64
 
 ## Delivery pipeline
 
-ProjectCollab includes a built-in, workspace-scoped delivery pipeline in the
-Delivery activity view. It provides six durable stages:
+ProjectCollab includes a built-in, workspace-scoped Delivery Center. Open it
+from the Delivery activity view or run **Delivery: Open Delivery Center**. It
+provides a visual dashboard, execution history, generated-artifact access, and
+six durable stages:
 
 1. Discover
 2. Plan
@@ -53,17 +55,29 @@ Delivery activity view. It provides six durable stages:
 5. Test
 6. Release
 
-Each stage can be connected to any existing VS Code task in the workspace.
-Use **Delivery: Configure Stage Task** once, then **Delivery: Run Stage Task**
-to execute it in the integrated terminal. A successful task marks the stage
-complete and advances to the next incomplete stage; a failed task marks the
-stage blocked. Release tasks require an explicit confirmation by default.
+Each stage can be connected to any existing VS Code task in the workspace. A
+workspace can opt into automatic discovery by naming its tasks `Delivery:
+Discover` through `Delivery: Release` and choosing **Set Up Workspace**. A
+successful task records a run, marks the stage complete, refreshes generated
+artifacts, and advances to the next incomplete stage; a failed task records the
+failure and marks the stage blocked. Release tasks require an explicit
+confirmation by default.
 
 Use **Delivery: Work With Agent** to open agent mode with a stage-specific
 brief, the configured verification task, and instructions to inspect and act
 on the current workspace. Pipeline progress and task assignments are stored in
 workspace state, so application source repositories are not modified merely by
 using the Delivery view.
+
+## Run the live demo
+
+The reproducible demo workspace lives in `demo/projectcollab-delivery`. Open
+that folder in ProjectCollab, open the Delivery Center, and choose **Set Up
+Workspace**. Its dependency-free tasks generate discovery, planning,
+architecture, build, test, and release evidence while delivering a runnable
+collaboration dashboard.
+
+Follow `demo/projectcollab-delivery/DEMO.md` for the six-minute presenter flow.
 
 The built-in extension lives in `extensions/projectcollab-delivery`. Compile
 and test it independently with:

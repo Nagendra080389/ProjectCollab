@@ -7,6 +7,7 @@ export const DELIVERY_STAGE_IDS = ['discover', 'plan', 'design', 'build', 'test'
 
 export type DeliveryStageId = typeof DELIVERY_STAGE_IDS[number];
 export type DeliveryStageStatus = 'pending' | 'running' | 'completed' | 'blocked';
+export type DeliveryRunStatus = 'running' | 'succeeded' | 'failed';
 
 export interface DeliveryTaskBinding {
 	readonly name: string;
@@ -19,10 +20,21 @@ export interface DeliveryStageState {
 	readonly task?: DeliveryTaskBinding;
 }
 
+export interface DeliveryRunRecord {
+	readonly id: string;
+	readonly stageId: DeliveryStageId;
+	readonly task: DeliveryTaskBinding;
+	readonly status: DeliveryRunStatus;
+	readonly startedAt: number;
+	readonly endedAt?: number;
+	readonly exitCode?: number;
+}
+
 export interface DeliveryState {
-	readonly version: 1;
+	readonly version: 2;
 	readonly activeStage: DeliveryStageId;
 	readonly stages: readonly DeliveryStageState[];
+	readonly runs: readonly DeliveryRunRecord[];
 	readonly updatedAt: number;
 }
 
@@ -35,9 +47,10 @@ export function isDeliveryStageId(value: string): value is DeliveryStageId {
 
 export function createInitialDeliveryState(now: number = Date.now()): DeliveryState {
 	return {
-		version: 1,
+		version: 2,
 		activeStage: DELIVERY_STAGE_IDS[0],
 		stages: DELIVERY_STAGE_IDS.map(id => ({ id, status: 'pending' })),
+		runs: [],
 		updatedAt: now
 	};
 }
@@ -58,12 +71,42 @@ export function normalizeDeliveryState(value: unknown, now: number = Date.now())
 	const activeStage = typeof candidate.activeStage === 'string' && isDeliveryStageId(candidate.activeStage)
 		? candidate.activeStage
 		: normalizedStages.find(stage => stage.status !== 'completed')?.id ?? DELIVERY_STAGE_IDS[0];
+	const runs = Array.isArray(candidate.runs)
+		? candidate.runs.map(normalizeRunRecord).filter((run): run is DeliveryRunRecord => run !== undefined).slice(0, 20)
+		: [];
 
 	return {
-		version: 1,
+		version: 2,
 		activeStage,
 		stages: normalizedStages,
+		runs,
 		updatedAt: typeof candidate.updatedAt === 'number' && Number.isFinite(candidate.updatedAt) ? candidate.updatedAt : now
+	};
+}
+
+function normalizeRunRecord(value: unknown): DeliveryRunRecord | undefined {
+	if (!value || typeof value !== 'object') {
+		return undefined;
+	}
+	const candidate = value as Partial<DeliveryRunRecord>;
+	const task = normalizeTaskBinding(candidate.task);
+	if (typeof candidate.id !== 'string' || !candidate.id || typeof candidate.stageId !== 'string' || !isDeliveryStageId(candidate.stageId) || !task) {
+		return undefined;
+	}
+	if (candidate.status !== 'running' && candidate.status !== 'succeeded' && candidate.status !== 'failed') {
+		return undefined;
+	}
+	if (typeof candidate.startedAt !== 'number' || !Number.isFinite(candidate.startedAt)) {
+		return undefined;
+	}
+	return {
+		id: candidate.id,
+		stageId: candidate.stageId,
+		task,
+		status: candidate.status,
+		startedAt: candidate.startedAt,
+		endedAt: typeof candidate.endedAt === 'number' && Number.isFinite(candidate.endedAt) ? candidate.endedAt : undefined,
+		exitCode: typeof candidate.exitCode === 'number' && Number.isFinite(candidate.exitCode) ? candidate.exitCode : undefined
 	};
 }
 
@@ -117,6 +160,37 @@ export function bindStageTask(
 	return {
 		...state,
 		stages: state.stages.map(stage => stage.id === stageId ? { ...stage, task } : stage),
+		updatedAt: now
+	};
+}
+
+export function startDeliveryRun(
+	state: DeliveryState,
+	stageId: DeliveryStageId,
+	task: DeliveryTaskBinding,
+	id: string,
+	now: number = Date.now()
+): DeliveryState {
+	return {
+		...setStageStatus(state, stageId, 'running', now),
+		runs: [{ id, stageId, task, status: 'running' as const, startedAt: now }, ...state.runs].slice(0, 20)
+	};
+}
+
+export function finishDeliveryRun(
+	state: DeliveryState,
+	id: string,
+	exitCode: number | undefined,
+	now: number = Date.now()
+): DeliveryState {
+	return {
+		...state,
+		runs: state.runs.map(run => run.id === id ? {
+			...run,
+			status: exitCode === 0 ? 'succeeded' as const : 'failed' as const,
+			endedAt: now,
+			exitCode
+		} : run),
 		updatedAt: now
 	};
 }

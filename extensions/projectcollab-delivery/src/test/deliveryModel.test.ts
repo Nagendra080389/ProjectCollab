@@ -8,9 +8,11 @@ import {
 	bindStageTask,
 	completeStage,
 	createInitialDeliveryState,
+	finishDeliveryRun,
 	getStageState,
 	normalizeDeliveryState,
 	selectStage,
+	startDeliveryRun,
 	setStageStatus
 } from '../deliveryModel';
 
@@ -21,11 +23,13 @@ suite('ProjectCollab Delivery Model', () => {
 			activeStage: state.activeStage,
 			stageIds: state.stages.map(stage => stage.id),
 			statuses: state.stages.map(stage => stage.status),
+			runs: state.runs,
 			updatedAt: state.updatedAt
 		}, {
 			activeStage: 'discover',
 			stageIds: ['discover', 'plan', 'design', 'build', 'test', 'release'],
 			statuses: ['pending', 'pending', 'pending', 'pending', 'pending', 'pending'],
+			runs: [],
 			updatedAt: 10
 		});
 	});
@@ -96,5 +100,35 @@ suite('ProjectCollab Delivery Model', () => {
 			activeStage: 'test',
 			status: 'blocked'
 		});
+	});
+
+	test('records a successful task run', () => {
+		const running = startDeliveryRun(
+			createInitialDeliveryState(10),
+			'build',
+			{ name: 'Delivery: Build', source: 'Workspace' },
+			'run-1',
+			20
+		);
+		const result = finishDeliveryRun(running, 'run-1', 0, 30);
+		assert.deepStrictEqual(result.runs[0], {
+			id: 'run-1',
+			stageId: 'build',
+			task: { name: 'Delivery: Build', source: 'Workspace' },
+			status: 'succeeded',
+			startedAt: 20,
+			endedAt: 30,
+			exitCode: 0
+		});
+	});
+
+	test('migrates persisted state without run history', () => {
+		const result = normalizeDeliveryState({
+			version: 1,
+			activeStage: 'test',
+			stages: [{ id: 'test', status: 'blocked' }]
+		}, 100);
+		assert.strictEqual(result.version, 2);
+		assert.deepStrictEqual(result.runs, []);
 	});
 });

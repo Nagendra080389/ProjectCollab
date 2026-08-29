@@ -5,6 +5,8 @@
 	"container.title": "Delivery",
 	"view.title": "Delivery Pipeline",
 	"command.category": "Delivery",
+	"command.openCenter": "Open Delivery Center",
+	"command.setupWorkspace": "Set Up Workspace",
 	"command.openAgent": "Work With Agent",
 	"command.runStageTask": "Run Stage Task",
 	"command.configureStageTask": "Configure Stage Task",
