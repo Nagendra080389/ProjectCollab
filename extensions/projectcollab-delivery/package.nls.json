@@ -1,0 +1,18 @@
+{
+	"displayName": "ProjectCollab Delivery",
+	"description": "A native, agent-assisted delivery pipeline for planning, building, validating, and releasing from the IDE.",
+	"workspaceTrust": "The delivery pipeline remains visible, but running configured tasks requires a trusted workspace.",
+	"container.title": "Delivery",
+	"view.title": "Delivery Pipeline",
+	"command.category": "Delivery",
+	"command.openAgent": "Work With Agent",
+	"command.runStageTask": "Run Stage Task",
+	"command.configureStageTask": "Configure Stage Task",
+	"command.selectStage": "Set as Current Stage",
+	"command.markComplete": "Mark Stage Complete",
+	"command.markBlocked": "Mark Stage Blocked",
+	"command.refresh": "Refresh",
+	"command.reset": "Reset Delivery Pipeline",
+	"configuration.title": "ProjectCollab Delivery",
+	"configuration.requireReleaseConfirmation": "Require explicit confirmation before running the configured Release stage task."
+}

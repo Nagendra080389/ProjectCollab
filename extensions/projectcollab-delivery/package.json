@@ -1,0 +1,176 @@
+{
+  "name": "projectcollab-delivery",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "publisher": "projectcollab",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension",
+  "activationEvents": [
+    "onView:projectcollab.delivery.stages",
+    "onCommand:projectcollab.delivery.openAgent",
+    "onCommand:projectcollab.delivery.runStageTask"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "%workspaceTrust%"
+    }
+  },
+  "scripts": {
+    "compile": "npx gulp compile-extension:projectcollab-delivery",
+    "watch": "npx gulp watch-extension:projectcollab-delivery"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "projectcollab-delivery",
+          "title": "%container.title%",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "projectcollab-delivery": [
+        {
+          "id": "projectcollab.delivery.stages",
+          "name": "%view.title%",
+          "contextualTitle": "%container.title%"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "projectcollab.delivery.openAgent",
+        "title": "%command.openAgent%",
+        "category": "%command.category%",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "projectcollab.delivery.runStageTask",
+        "title": "%command.runStageTask%",
+        "category": "%command.category%",
+        "icon": "$(play)"
+      },
+      {
+        "command": "projectcollab.delivery.configureStageTask",
+        "title": "%command.configureStageTask%",
+        "category": "%command.category%",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "projectcollab.delivery.selectStage",
+        "title": "%command.selectStage%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "projectcollab.delivery.markComplete",
+        "title": "%command.markComplete%",
+        "category": "%command.category%",
+        "icon": "$(pass)"
+      },
+      {
+        "command": "projectcollab.delivery.markBlocked",
+        "title": "%command.markBlocked%",
+        "category": "%command.category%",
+        "icon": "$(error)"
+      },
+      {
+        "command": "projectcollab.delivery.refresh",
+        "title": "%command.refresh%",
+        "category": "%command.category%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "projectcollab.delivery.reset",
+        "title": "%command.reset%",
+        "category": "%command.category%",
+        "icon": "$(discard)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "projectcollab.delivery.openAgent",
+          "when": "view == projectcollab.delivery.stages",
+          "group": "navigation@1"
+        },
+        {
+          "command": "projectcollab.delivery.runStageTask",
+          "when": "view == projectcollab.delivery.stages",
+          "group": "navigation@2"
+        },
+        {
+          "command": "projectcollab.delivery.refresh",
+          "when": "view == projectcollab.delivery.stages",
+          "group": "navigation@3"
+        },
+        {
+          "command": "projectcollab.delivery.reset",
+          "when": "view == projectcollab.delivery.stages",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "projectcollab.delivery.openAgent",
+          "when": "view == projectcollab.delivery.stages && viewItem == projectcollabDeliveryStage",
+          "group": "inline@1"
+        },
+        {
+          "command": "projectcollab.delivery.runStageTask",
+          "when": "view == projectcollab.delivery.stages && viewItem == projectcollabDeliveryStage",
+          "group": "inline@2"
+        },
+        {
+          "command": "projectcollab.delivery.selectStage",
+          "when": "view == projectcollab.delivery.stages && viewItem == projectcollabDeliveryStage",
+          "group": "navigation@1"
+        },
+        {
+          "command": "projectcollab.delivery.configureStageTask",
+          "when": "view == projectcollab.delivery.stages && viewItem == projectcollabDeliveryStage",
+          "group": "navigation@2"
+        },
+        {
+          "command": "projectcollab.delivery.markComplete",
+          "when": "view == projectcollab.delivery.stages && viewItem == projectcollabDeliveryStage",
+          "group": "navigation@3"
+        },
+        {
+          "command": "projectcollab.delivery.markBlocked",
+          "when": "view == projectcollab.delivery.stages && viewItem == projectcollabDeliveryStage",
+          "group": "navigation@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "projectCollab.delivery.requireReleaseConfirmation": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "%configuration.requireReleaseConfirmation%"
+        }
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nagendra080389/ProjectCollab.git"
+  }
+}

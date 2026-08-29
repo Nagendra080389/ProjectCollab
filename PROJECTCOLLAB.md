@@ -41,6 +41,40 @@ For an Apple Silicon production-style build:
 npm run gulp vscode-darwin-arm64
 ```
 
+## Delivery pipeline
+
+ProjectCollab includes a built-in, workspace-scoped delivery pipeline in the
+Delivery activity view. It provides six durable stages:
+
+1. Discover
+2. Plan
+3. Design
+4. Build
+5. Test
+6. Release
+
+Each stage can be connected to any existing VS Code task in the workspace.
+Use **Delivery: Configure Stage Task** once, then **Delivery: Run Stage Task**
+to execute it in the integrated terminal. A successful task marks the stage
+complete and advances to the next incomplete stage; a failed task marks the
+stage blocked. Release tasks require an explicit confirmation by default.
+
+Use **Delivery: Work With Agent** to open agent mode with a stage-specific
+brief, the configured verification task, and instructions to inspect and act
+on the current workspace. Pipeline progress and task assignments are stored in
+workspace state, so application source repositories are not modified merely by
+using the Delivery view.
+
+The built-in extension lives in `extensions/projectcollab-delivery`. Compile
+and test it independently with:
+
+```bash
+npm run gulp -- compile-extension:projectcollab-delivery
+node node_modules/mocha/bin/mocha.js \
+  extensions/projectcollab-delivery/out/test/deliveryModel.test.js \
+  --ui tdd
+```
+
 ## Pull changes from Code - OSS
 
 First refresh the clean `main` branch:
